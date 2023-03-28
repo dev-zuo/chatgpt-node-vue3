@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scale=0"
+    />
+    <title>open-ai</title>
+    <link
+      rel="stylesheet"
+      href="http://cdn.zuo11.com/zuo-deploy/element-plus.2.2.18.index.css"
+    />
+    <script src="http://cdn.zuo11.com/zuo-deploy/vue.3.2.41.min.js"></script>
+    <script src="http://cdn.zuo11.com/zuo-deploy/element-plus-2.2.18.min.js"></script>
+    <script src="http://cdn.zuo11.com/zuo-deploy/axios.1.1.2.min.js"></script>
+    <!-- <script src="http://cdn.zuo11.com/zuo-deploy/socket.io.4.4.1.min.js"></script> -->
+    <script src="http://cdn.zuo11.com/zuo-deploy/lodash.4.17.21.min.js"></script>
+    <style>
+      html,
+      body {
+        -webkit-text-size-adjust: none; /*禁止字体大小自适应*/
+      }
+      :root {
+        --el-color-primary: #4154ff;
+      }
+      h1 {
+        font-family: sans-serif;
+        font-size: 28px;
+      }
+      /* .m-b-20 {
+        margin-bottom: 20px;
+      } */
+      .chat-view-msg {
+        display: flex;
+        align-items: flex-start;
+        margin-bottom: 10px;
+      }
+      .chat-input {
+        display: flex;
+      }
+      .chat-input .m-b-20 {
+        width: 100%;
+        margin-right: 20px;
+      }
+      pre {
+        /* fix chatgpt 内容不换行的问题 */
+        max-width: 100%;
+        white-space: pre-wrap; /* http://fe.zuo11.com/css/html5-css-8.html#white-space-%E5%A4%84%E7%90%86%E7%A9%BA%E7%99%BD */
+
+        background: #eee;
+        border-radius: 10px;
+        margin: 0;
+        padding: 8px;
+        font-size: 15px;
+        font-family: Arial, Helvetica, sans-serif;
+      }
+      .user-msg {
+        display: flex;
+        justify-content: flex-end;
+      }
+      .chat-view {
+        padding: 20px;
+        max-height: 500px;
+        overflow-y: scroll;
+        margin-bottom: 20px;
+      }
+      .chat-view-msg .info {
+        margin-right: 10px;
+      }
+      .open-ai-svg {
+        width: 24px;
+        height: 24px;
+        background: #75a89c;
+        border-radius: 5px;
+        padding: 5px;
+        box-sizing: content-box;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <el-dialog v-model="dialogLoginVisible" title="登录" width="366px">
+        <div class="login-area">
+          <div>
+            <el-input
+              v-model="password"
+              type="password"
+              placeholder="请输入服务密码"
+            ></el-input>
+          </div>
+        </div>
+        <template #footer>
+          <span class="dialog-footer">
+            <el-button @click="dialogLoginVisible = false">取消</el-button>
+            <el-button type="primary" @click="login"> 登录 </el-button>
+          </span>
+        </template>
+      </el-dialog>
+
+      <h1>OpenAI API</h1>
+      <div style="margin-bottom: 20px">
+        OpenAI 功能类型：
+        <el-radio-group v-model="funcType">
+          <el-radio-button label="Chat"></el-radio-button>
+          <el-radio-button label="Image generation"></el-radio-button>
+        </el-radio-group>
+      </div>
+      <!-- chat -->
+      <div style="margin: 0 0 20px 20px" v-if="funcType === 'Chat'">
+        OpenAI 返回数据类型：
+        <el-select v-model="stream" placeholder="选择响应数据格式">
+          <el-option :key="1" label="普通数据" :value="false"></el-option>
+          <el-option :key="2" label="stream流" :value="true"></el-option>
+        </el-select>
+      </div>
+      <div style="margin: 0 0 20px 20px" v-if="funcType === 'Image generation'">
+        <div style="margin: 0 0 20px 0">
+          生成图片张数：
+          <el-radio-group v-model="imageForm.imgCount">
+            <el-radio-button
+              v-for="item in 10"
+              :label="item"
+              :key="item"
+            ></el-radio-button>
+          </el-radio-group>
+        </div>
+        <div style="margin: 0 0 20px 0">
+          生成图片大小：
+          <!-- Must be one of 256x256, 512x512, or 1024x1024 -->
+          <el-radio-group v-model="imageForm.imgSize">
+            <el-radio-button
+              v-for="item in ['256x256', '512x512', '1024x1024']"
+              :label="item"
+              :key="item"
+            ></el-radio-button>
+          </el-radio-group>
+        </div>
+        <div style="margin: 0 0 20px 0">
+          返回数据格式：
+          <el-radio-group v-model="imageForm.responseFormat">
+            <el-radio-button
+              v-for="item in ['url', 'b64_json']"
+              :label="item"
+              :key="item"
+            ></el-radio-button>
+          </el-radio-group>
+        </div>
+      </div>
+
+      <div class="chat-view" v-if="chatList.length">
+        <template v-for="item in chatList">
+          <div :class="{'user-msg': item.role === 'user'}">
+            <div class="chat-view-msg">
+              <!-- {{item.role === 'user' ? 'user' : 'openai'}} -->
+              <div class="info">
+                <div class="open-ai-svg" v-if="item.role !== 'user'">
+                  <svg
+                    data-name="OpenAI Logo"
+                    width="24px"
+                    height="24px"
+                    viewBox="140 140 520 520"
+                  >
+                    <defs>
+                      <linearGradient
+                        id="linear"
+                        x1="100%"
+                        y1="22%"
+                        x2="0%"
+                        y2="78%"
+                      >
+                        <stop offset="0%" stop-color="rgb(131,211,231)"></stop>
+                        <stop offset="2%" stop-color="rgb(127,203,229)"></stop>
+                        <stop offset="25%" stop-color="rgb(86,115,217)"></stop>
+                        <stop offset="49%" stop-color="rgb(105,80,190)"></stop>
+                        <stop offset="98%" stop-color="rgb(197,59,119)"></stop>
+                        <stop offset="100%" stop-color="rgb(197,59,119)"></stop>
+                      </linearGradient>
+                    </defs>
+                    <path
+                      id="logo"
+                      d="m617.24 354a126.36 126.36 0 0 0 -10.86-103.79 127.8 127.8 0 0 0 -137.65-61.32 126.36 126.36 0 0 0 -95.31-42.49 127.81 127.81 0 0 0 -121.92 88.49 126.4 126.4 0 0 0 -84.5 61.3 127.82 127.82 0 0 0 15.72 149.86 126.36 126.36 0 0 0 10.86 103.79 127.81 127.81 0 0 0 137.65 61.32 126.36 126.36 0 0 0 95.31 42.49 127.81 127.81 0 0 0 121.96-88.54 126.4 126.4 0 0 0 84.5-61.3 127.82 127.82 0 0 0 -15.76-149.81zm-190.66 266.49a94.79 94.79 0 0 1 -60.85-22c.77-.42 2.12-1.16 3-1.7l101-58.34a16.42 16.42 0 0 0 8.3-14.37v-142.39l42.69 24.65a1.52 1.52 0 0 1 .83 1.17v117.92a95.18 95.18 0 0 1 -94.97 95.06zm-204.24-87.23a94.74 94.74 0 0 1 -11.34-63.7c.75.45 2.06 1.25 3 1.79l101 58.34a16.44 16.44 0 0 0 16.59 0l123.31-71.2v49.3a1.53 1.53 0 0 1 -.61 1.31l-102.1 58.95a95.16 95.16 0 0 1 -129.85-34.79zm-26.57-220.49a94.71 94.71 0 0 1 49.48-41.68c0 .87-.05 2.41-.05 3.48v116.68a16.41 16.41 0 0 0 8.29 14.36l123.31 71.19-42.69 24.65a1.53 1.53 0 0 1 -1.44.13l-102.11-59a95.16 95.16 0 0 1 -34.79-129.81zm350.74 81.62-123.31-71.2 42.69-24.64a1.53 1.53 0 0 1 1.44-.13l102.11 58.95a95.08 95.08 0 0 1 -14.69 171.55c0-.88 0-2.42 0-3.49v-116.68a16.4 16.4 0 0 0 -8.24-14.36zm42.49-63.95c-.75-.46-2.06-1.25-3-1.79l-101-58.34a16.46 16.46 0 0 0 -16.59 0l-123.31 71.2v-49.3a1.53 1.53 0 0 1 .61-1.31l102.1-58.9a95.07 95.07 0 0 1 141.19 98.44zm-267.11 87.87-42.7-24.65a1.52 1.52 0 0 1 -.83-1.17v-117.92a95.07 95.07 0 0 1 155.9-73c-.77.42-2.11 1.16-3 1.7l-101 58.34a16.41 16.41 0 0 0 -8.3 14.36zm23.19-50 54.92-31.72 54.92 31.7v63.42l-54.92 31.7-54.92-31.7z"
+                      fill="#202123"
+                      style="fill: #fff"
+                    ></path>
+                  </svg>
+                </div>
+                <div v-else>{{item.role}}</div>
+              </div>
+              <div
+                v-if="item.type === 'Image generation'"
+                style="background: #eee; border-radius: 10px; padding: 8px"
+              >
+                <el-image
+                  v-for="subItem in (item.content || [])"
+                  style="
+                    width: 100px;
+                    height: 100px;
+                    margin-right: 15px;
+                    border-radius: 5px;
+                  "
+                  :src="subItem.url"
+                  :zoom-rate="1.2"
+                  :preview-src-list="item.content.map(imgInfo => imgInfo.url)"
+                  :initial-index="4"
+                  fit="cover"
+                ></el-image>
+                <span
+                  v-if="!Array.isArray(item.content) || item.content.length === 0"
+                >
+                  图片数据格式异常
+                  <pre>{{item.content}}</pre>
+                </span>
+              </div>
+              <pre v-else>{{item.content}}</pre>
+            </div>
+          </div>
+        </template>
+      </div>
+      <div class="chat-input" v-if="funcType === 'Chat'">
+        <div class="m-b-20">
+          <el-input
+            type="textarea"
+            v-model="chatContent"
+            placeholder="请输入文本内容"
+          ></el-input>
+        </div>
+        <el-button type="primary" @click="sendChat">发送</el-button>
+      </div>
+      <div class="chat-input" v-else-if="funcType === 'Image generation'">
+        <div class="m-b-20">
+          <el-input
+            type="textarea"
+            v-model="chatContent"
+            placeholder="请输入生成图片的提示"
+          ></el-input>
+        </div>
+        <el-button type="primary" @click="generateImage">生成图片</el-button>
+      </div>
+    </div>
+    <script>
+      const app = {
+        data() {
+          return {
+            dialogLoginVisible: false,
+            password: "",
+            isLogin: false, // 是否已登录
+
+            chatContent: "",
+            chatList: [],
+            funcType: "Chat", // OpenAI 功能类型 Chat 对话，Image generation 图片生成
+            stream: false, // 返回是否是流数据
+            imageForm: {
+              imgCount: 1,
+              imgSize: "1024x1024",
+              responseFormat: "url", // b64_json
+            },
+          };
+        },
+        created() {
+          console.log("created");
+          axios.interceptors.response.use(
+            (response) => {
+              console.log("响应拦截", response);
+              // 如果身份校验失败，返回登录页
+              let { code, msg } = response.data || {};
+              if (code === -2 && msg === "未登录") {
+                this.isLogin = false;
+                this.toggleLoginDialog(true);
+              }
+              return response;
+            },
+            (error) => {
+              // Do something with response error
+              return Promise.reject(error);
+            }
+          );
+        },
+        mounted() {
+          console.log("mounted");
+          axios
+            .get("/isLogin")
+            .then((response) => {
+              let { code, msg, data } = response.data;
+              if (data) {
+                this.isLogin = true;
+              } else {
+                this.toggleLoginDialog(true);
+              }
+            })
+            .catch((error) => {
+              console.log(error, this.$message);
+              this.$message.error("获取登录状态失败, " + error.message);
+              this.toggleLoginDialog(true);
+            });
+        },
+        methods: {
+          scrollToEnd() {
+            this.$nextTick(() => {
+              document.querySelector(".chat-view").scrollTop = 100000000;
+            });
+          },
+          sendChat() {
+            console.log(this.chatContent);
+            if (this.chatContent.trim() === "") {
+              this.$message.warn("内容不能为空");
+              return;
+            }
+            this.chatList.push({
+              role: "user",
+              content: this.chatContent,
+            });
+            let content = this.chatContent;
+            this.chatContent = "";
+            this.scrollToEnd();
+            axios
+              .post("/open-ai/sendMsg", { chatContent: content, stream: this.stream })
+              .then((response) => {
+                console.log(response.data);
+                let { code, msg, data } = response.data;
+                if (code === 0) {
+                  console.log("接收到消息", data);
+                  // content: "xxxx",
+                  // role: "assistant"
+                  this.chatList.push(data);
+                  this.scrollToEnd();
+                } else {
+                  this.$message.error("消息发送失败" + msg);
+                }
+              })
+              .catch((err) => {
+                console.log(err, err.message);
+                this.$message.error("消息发送失败" + err.message);
+              });
+            // setTimeout(() => {
+            //   let role = "openAI";
+            //   let content =
+            //     "手机号的格式为：11位数字，以1开头，第二位可以是3、4、5、7、8中的任意一个数字。\n\n正则表达式：\n^1[34578]\\d{9}$\n\n解释：\n^：表示匹配字符串的开头\n1：表示以1开头\n[34578]：表示第二位是3、4、5、7、8中的任意一个数\n\\d：表示数字\n{9}：表示前面的\\d需要匹配9次，即共匹配11位数字\n$：表示匹配字符串的结尾\n\n使用示例：\n```python\nimport re\n\ndef check_phone_number(phone_number):\n    pattern = r'^1[34578]\\d{9}$'\n    return re.match(pattern, phone_number) != None\n\nprint(check_phone_number('13411112222')) # True\nprint(check_phone_number('15012345678')) # True\nprint(check_phone_number('12345678901')) # False\nprint(check_phone_number('1380000000')) # False\n```";
+            //   this.chatList.push({
+            //     role,
+            //     content,
+            //   });
+            //   this.scrollToEnd();
+            // }, 2000);
+          },
+          generateImage() {
+            console.log(this.chatContent);
+            if (this.chatContent.trim() === "") {
+              this.$message.warn("提示不能为空");
+              return;
+            }
+            this.chatList.push({
+              role: "user",
+              content: this.chatContent,
+            });
+            let content = this.chatContent;
+            this.chatContent = "";
+            this.scrollToEnd();
+            axios
+              .post("/open-ai/imageGenerate", {
+                prompt: content,
+                ...this.imageForm,
+              })
+              .then((response) => {
+                console.log(response.data);
+                let { code, msg, data } = response.data;
+                if (code === 0) {
+                  console.log("生成图片成功", data);
+                  //   [
+                  //         {
+                  //         "url": "https://..."
+                  //         },
+                  //         {
+                  //         "url": "https://..."
+                  //         }
+                  //     ]
+                  this.chatList.push({
+                    type: "Image generation",
+                    content: data,
+                    role: "assistant",
+                  });
+                  this.scrollToEnd();
+                } else {
+                  this.$message.error("生成图片失败" + msg);
+                }
+              })
+              .catch((err) => {
+                console.log(err, err.message);
+                this.$message.error("生成图片失败" + err.message);
+              });
+            // setTimeout(() => {
+            //   let role = "openAI";
+            //   let content = [
+            //     {
+            //       url: "http://zuo11.com/images/blog/vue-source/code_router_1_prepare.png",
+            //     },
+            //     {
+            //       url: "http://zuo11.com/images/blog/vue-source/code_router_2_silu.png",
+            //     },
+            //   ];
+            //   this.chatList.push({
+            //     type: "Image generation",
+            //     content,
+            //     role: "assistant",
+            //   });
+            //   this.scrollToEnd();
+            // }, 2000);
+          },
+          toggleLoginDialog(val) {
+            this.dialogLoginVisible = val;
+          },
+          login() {
+            if (!this.password) {
+              this.$message.warning("请输入密码");
+              return;
+            }
+            axios
+              .post("/login", { password: this.password })
+              .then((response) => {
+                console.log(response.data);
+                let { code, msg } = response.data;
+                if (code === 0) {
+                  this.isLogin = true;
+                  this.toggleLoginDialog(false); // 关闭登录弹窗
+                  this.$message.success("登录成功");
+                } else {
+                  this.$message.error("登录失败, " + msg);
+                }
+              })
+              .catch((err) => {
+                console.log(err, err.message);
+                // this.$message.error("登录失败", err.message); // v3.x bug
+                this.$message.error("登录失败" + err.message);
+              });
+          },
+        },
+      };
+      Vue.createApp(app).use(ElementPlus).mount("#app");
+    </script>
+  </body>
+</html>
