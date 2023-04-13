@@ -6,6 +6,8 @@ const bodyParser = require("koa-bodyparser");
 const path = require("path");
 const fs = require("fs");
 const dayjs = require("dayjs");
+const { PassThrough } = require("stream");
+require("isomorphic-fetch");
 
 const app = new Koa();
 app.use(new KoaStatic(path.resolve(__dirname, "../fe")));
@@ -66,6 +68,7 @@ router.post("/login", async (ctx) => {
 
 const { Configuration, OpenAIApi } = require("openai");
 let openai = "";
+let chatgptApi = "";
 const connectOpenAI = async () => {
   let { apiKey } = await import("../config/api-key.mjs");
   const configuration = new Configuration({
@@ -73,9 +76,67 @@ const connectOpenAI = async () => {
     apiKey: apiKey,
   });
   openai = new OpenAIApi(configuration);
+  const { ChatGPTAPI } = await import("chatgpt");
+  chatgptApi = new ChatGPTAPI({ apiKey });
 };
 
 connectOpenAI();
+
+// SSE 请求，不返回标准 JSON，而是 UTF-8 文本
+const CLOSE_MARK_MSG = "--dev-zuo[DONE]dev-zuo--";
+router.get("/open-ai/sendMsg", async (ctx) => {
+  ctx.set({
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+  });
+  const steamData = new PassThrough();
+  ctx.body = steamData;
+  if (!ctx.session.isLogin) {
+    let notLogin = {
+      code: -2,
+      msg: "未登录",
+    };
+    console.log("res", JSON.stringify(notLogin));
+    // 格式为 `data:xxx\n\n` 前面 data，后面 \n\n 这种前端才能正常收到消息
+    steamData.write(`data:${JSON.stringify(notLogin)}\n\n`);
+    // 通知前端接口已完成请求，关闭 EventSource 连接
+    steamData.write(`data:${CLOSE_MARK_MSG}\n\n`);
+    return;
+  }
+  // // mock 数据测试，每隔 300 ms 发送数字给前端，1-29
+  // let i = 1;
+  // let END_COUNT = 30
+  // let timer = setInterval(() => {
+  //   steamData.write(`data:${i++}\n\n`);
+  //   if (i === END_COUNT) {
+  //     console.log(`${i}`)
+  //     steamData.write(`data:${CLOSE_MARK_MSG}\n\n`);
+  //     clearInterval(timer)
+  //   }
+  // }, 300)
+
+  let { chatContent } = ctx.request.query;
+  // form npm package "chatgpt"
+  console.log("****>>chatgptAPI", chatgptApi);
+  // steamData.write(`data:开始请求\n\n`);
+  // https://www.npmjs.com/package/chatgpt
+  // 不能用 await，因为会导致所有信息完成后，才一次性 response 到前端
+  chatgptApi.sendMessage(chatContent, {
+    // print the partial response as the AI is "typing"
+    onProgress: (partRes) => {
+      console.log(JSON.stringify(partRes));
+      // JSON.stringify('xxx') => '"xxx"'
+      steamData.write(`data:${JSON.stringify(partRes.text)}\n\n`);
+      // {"role":"assistant","id":"chatcmpl-74YzUfLNYFwbATCpNNEyg55UeAwi7","parentMessageId":"9a9fd7a2-8b9b-4e40-96ab-176bf80f1f43","text":"您好！","detail":{"id":"chatcmpl-74YzUfLNYFwbATCpNNEyg55UeAwi7","object":"chat.completion.chunk","created":1681322172,"model":"gpt-3.5-turbo-0301","choices":[{"delta":{},"index":0,"finish_reason":"stop"}]}}
+      if (partRes.detail.choices[0].finish_reason === "stop") {
+        console.log("响应已结束", partRes.text); // print the full text at the end
+        steamData.write(`data:${CLOSE_MARK_MSG}\n\n`);
+        steamData.end();
+      }
+    },
+  });
+});
 
 router.post("/open-ai/sendMsg", async (ctx) => {
   if (!ctx.session.isLogin) {
@@ -94,7 +155,6 @@ router.post("/open-ai/sendMsg", async (ctx) => {
       messages: [{ role: "user", content: chatContent }],
       stream, // 是否是数据流，默认为 false
     });
-    // Cannot read properties of undefined (reading '0')
     console.log("result", completion.data);
     console.log("result", completion.data.choices[0].message);
     ctx.body = {

@@ -77,6 +77,29 @@
         padding: 5px;
         box-sizing: content-box;
       }
+      .loading-text {
+        background: #4154ff11;
+        position: fixed;
+        top: 0;
+        width: 100%;
+        left: 0;
+        text-align: center;
+        /* font-size: 12px; */
+        /* height: 30px; */
+        padding: 2px 0;
+        color: #4154ff;
+      }
+      @keyframes animationLoading {
+        from {
+          clip-path: inset(0 50% 0 50%);
+        }
+        to {
+          clip-path: inset(0 0 0 0);
+        }
+      }
+      .loading-text span {
+        animation: animationLoading 1s ease infinite;
+      }
     </style>
   </head>
   <body>
@@ -100,6 +123,7 @@
       </el-dialog>
 
       <h1>OpenAI API</h1>
+      <div v-if="loading" class="loading-text"><span>消息接收中....</span></div>
       <div style="margin-bottom: 20px">
         OpenAI 功能类型：
         <el-radio-group v-model="funcType">
@@ -238,7 +262,16 @@
         </div>
         <el-button type="primary" @click="generateImage">生成图片</el-button>
       </div>
+      <el-button
+        v-if="!loading"
+        type="default"
+        size="small"
+        @click="clearChatList"
+        style="margin-top: 15px"
+        >清空消息列表</el-button
+      >
     </div>
+
     <script>
       const app = {
         data() {
@@ -250,12 +283,15 @@
             chatContent: "",
             chatList: [],
             funcType: "Chat", // OpenAI 功能类型 Chat 对话，Image generation 图片生成
-            stream: false, // 返回是否是流数据
+            stream: true, // 返回是否是流数据
             imageForm: {
               imgCount: 1,
               imgSize: "1024x1024",
               responseFormat: "url", // b64_json
             },
+            preEventSource: "", // 之前的 EventSource，用于在每次发起请求时关闭上一次的 SSE 连接
+            curStreamMsgObj: undefined, // 当前 stream 消息对象，用于追加内容
+            loading: false,
           };
         },
         created() {
@@ -304,7 +340,7 @@
           sendChat() {
             console.log(this.chatContent);
             if (this.chatContent.trim() === "") {
-              this.$message.warn("内容不能为空");
+              this.$message.error("内容不能为空");
               return;
             }
             this.chatList.push({
@@ -314,8 +350,67 @@
             let content = this.chatContent;
             this.chatContent = "";
             this.scrollToEnd();
+            // SSE stream 流数据接收
+            if (this.stream) {
+              this.loading = true;
+              // 先关闭上一次的连接，防止消息错乱
+              this.preEventSource && this.preEventSource?.close();
+              this.curStreamMsgObj = undefined;
+              // 发生 SSE 类型请求，GET
+              const evtSource = new EventSource(
+                "/open-ai/sendMsg?chatContent=" + encodeURIComponent(content)
+              );
+              const CLOSE_MARK_MSG = "--dev-zuo[DONE]dev-zuo--";
+              this.preEventSource = evtSource;
+              evtSource.onmessage = (event) => {
+                console.log("message: " + event.data);
+                // 未登录处理，需要后端配合将 JSON 转为 `data: xxx\n\n` utf-8 文本类型
+                if (event.data.includes('{"code":-2,"msg":"未登录"}')) {
+                  this.isLogin = false;
+                  this.toggleLoginDialog(true);
+                  this.loading = false;
+                }
+                // 服务端已完成本次数据推送
+                if (event.data === CLOSE_MARK_MSG) {
+                  evtSource.close();
+                  this.loading = false;
+                  this.curStreamMsgObj = undefined;
+                  return;
+                }
+                this.scrollToEnd();
+                // 正常接收到数据, 逐一追加显示到前端
+                if (this.curStreamMsgObj) {
+                  // 正在接收数据，追加？每次都会携带上次数据，直接覆盖
+                  // this.curStreamMsgObj.content += event.data;
+                  this.curStreamMsgObj.content = JSON.parse(event.data);
+                } else {
+                  // 第一次接收数据
+                  this.curStreamMsgObj = {
+                    role: "openAI",
+                    content: JSON.parse(event.data), // '"xxx"' => 'xxx'
+                  };
+                  // 显示到消息列表
+                  this.chatList.push(this.curStreamMsgObj);
+                }
+              };
+              // SSE 错误处理，如果是为登录返回的 JSON 数据，而非 SSE 的  'data:xxx\n' 数据
+              evtSource.onerror = (err) => {
+                // 服务都 stream.end() 也会触发这个钩子，待处理
+                // console.error("EventSource failed:", err);
+                // this.$message.error(
+                //   `服务端推送事件格式错误, EventSource failed：${err.message}`
+                // );
+                // 防止断线重连
+                evtSource.close();
+                this.loading = false;
+              };
+              return;
+            }
             axios
-              .post("/open-ai/sendMsg", { chatContent: content, stream: this.stream })
+              .post("/open-ai/sendMsg", {
+                chatContent: content,
+                stream: this.stream,
+              })
               .then((response) => {
                 console.log(response.data);
                 let { code, msg, data } = response.data;
@@ -347,7 +442,7 @@
           generateImage() {
             console.log(this.chatContent);
             if (this.chatContent.trim() === "") {
-              this.$message.warn("提示不能为空");
+              this.$message.error("提示不能为空");
               return;
             }
             this.chatList.push({
@@ -412,7 +507,7 @@
           },
           login() {
             if (!this.password) {
-              this.$message.warning("请输入密码");
+              this.$message.erroring("请输入密码");
               return;
             }
             axios
@@ -434,6 +529,9 @@
                 this.$message.error("登录失败" + err.message);
               });
           },
+          clearChatList() {
+            this.chatList = [];
+          }
         },
       };
       Vue.createApp(app).use(ElementPlus).mount("#app");

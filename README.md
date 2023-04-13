@@ -23,6 +23,10 @@ node server/index.js
 
 运行服务成功后，访问 <https://服务器ip:9000> 即可体验功能。**注意服务器需要在国外！！！**，比如 AWS 免费一年国外服务器。
 
+## chatgpt stream 实现原理
+
+- [60 行代码 demo 理解 SSE（Server-sent events） 使用](https://github.com/zuoxiaobai/fedemo/tree/master/src/DebugDemo/server-send-events)
+
 ## 功能演示
 
 ### chatgpt
