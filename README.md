@@ -2,6 +2,8 @@
 
 OpenAI ChatGPT server
 
+> node v16.17.1
+
 ## 代码部署运行
 
 将代码拷贝到服务器（或者 fork 后，git clone 到服务器）
